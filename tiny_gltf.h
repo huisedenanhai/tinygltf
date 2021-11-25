@@ -613,7 +613,8 @@ struct Sampler {
   int wrapT =
       TINYGLTF_TEXTURE_WRAP_REPEAT;  // ["CLAMP_TO_EDGE", "MIRRORED_REPEAT",
                                      // "REPEAT"], default "REPEAT"
-  //int wrapR = TINYGLTF_TEXTURE_WRAP_REPEAT;  // TinyGLTF extension. currently not used.
+  // int wrapR = TINYGLTF_TEXTURE_WRAP_REPEAT;  // TinyGLTF extension. currently
+  // not used.
 
   Value extras;
   ExtensionMap extensions;
@@ -1402,6 +1403,10 @@ class TinyGLTF {
 
   bool GetPreserveImageChannels() const { return preserve_image_channels_; }
 
+  void SetLoadExternalImages(bool onoff) { load_external_images_ = onoff; }
+
+  bool GetLoadExternalImages() const { return load_external_images_; }
+
  private:
   ///
   /// Loads glTF asset from string(memory).
@@ -1421,6 +1426,7 @@ class TinyGLTF {
 
   bool store_original_json_for_extras_and_extensions_ = false;
 
+  bool load_external_images_ = true;
   bool preserve_image_channels_ = false;  /// Default false(expand channels to
                                           /// RGBA) for backward compatibility.
 
@@ -1935,7 +1941,7 @@ bool Sampler::operator==(const Sampler &other) const {
          this->minFilter == other.minFilter && this->name == other.name &&
          this->wrapT == other.wrapT;
 
-         //this->wrapR == other.wrapR && this->wrapS == other.wrapS &&
+  // this->wrapR == other.wrapR && this->wrapS == other.wrapS &&
 }
 bool Scene::operator==(const Scene &other) const {
   return this->extensions == other.extensions && this->extras == other.extras &&
@@ -2040,10 +2046,9 @@ static std::string GetBaseDir(const std::string &filepath) {
 }
 
 static std::string GetBaseFilename(const std::string &filepath) {
-  constexpr char path_separators[2] = { '/', '\\' };
+  constexpr char path_separators[2] = {'/', '\\'};
   auto idx = filepath.find_last_of(path_separators);
-  if (idx != std::string::npos)
-    return filepath.substr(idx + 1);
+  if (idx != std::string::npos) return filepath.substr(idx + 1);
   return filepath;
 }
 
@@ -2216,7 +2221,7 @@ std::string base64_decode(std::string const &encoded_string) {
 // FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
 // ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
-// 
+//
 namespace dlib {
 
 inline unsigned char from_hex(unsigned char ch) {
@@ -3723,7 +3728,8 @@ static bool ParseImage(Image *image, const int image_idx, std::string *err,
                        bool store_original_json_for_extras_and_extensions,
                        const std::string &basedir, FsCallbacks *fs,
                        LoadImageDataFunction *LoadImageData = nullptr,
-                       void *load_image_user_data = nullptr) {
+                       void *load_image_user_data = nullptr,
+                       bool load_external_image = true) {
   // A glTF image must either reference a bufferView or an image uri
 
   // schema says oneOf [`bufferView`, `uri`]
@@ -3832,6 +3838,9 @@ static bool ParseImage(Image *image, const int image_idx, std::string *err,
 #ifdef TINYGLTF_NO_EXTERNAL_IMAGE
     return true;
 #endif
+    if (!load_external_image) {
+      return true;
+    }
     std::string decoded_uri = dlib::urldecode(uri);
     if (!LoadExternalFile(&img, err, warn, decoded_uri, basedir,
                           /* required */ false, /* required bytes */ 0,
@@ -5081,12 +5090,13 @@ static bool ParseSampler(Sampler *sampler, std::string *err, const json &o,
   int magFilter = -1;
   int wrapS = TINYGLTF_TEXTURE_WRAP_REPEAT;
   int wrapT = TINYGLTF_TEXTURE_WRAP_REPEAT;
-  //int wrapR = TINYGLTF_TEXTURE_WRAP_REPEAT;
+  // int wrapR = TINYGLTF_TEXTURE_WRAP_REPEAT;
   ParseIntegerProperty(&minFilter, err, o, "minFilter", false);
   ParseIntegerProperty(&magFilter, err, o, "magFilter", false);
   ParseIntegerProperty(&wrapS, err, o, "wrapS", false);
   ParseIntegerProperty(&wrapT, err, o, "wrapT", false);
-  //ParseIntegerProperty(&wrapR, err, o, "wrapR", false);  // tinygltf extension
+  // ParseIntegerProperty(&wrapR, err, o, "wrapR", false);  // tinygltf
+  // extension
 
   // TODO(syoyo): Check the value is alloed one.
   // (e.g. we allow 9728(NEAREST), but don't allow 9727)
@@ -5095,7 +5105,7 @@ static bool ParseSampler(Sampler *sampler, std::string *err, const json &o,
   sampler->magFilter = magFilter;
   sampler->wrapS = wrapS;
   sampler->wrapT = wrapT;
-  //sampler->wrapR = wrapR;
+  // sampler->wrapR = wrapR;
 
   ParseExtensionsProperty(&(sampler->extensions), err, o);
   ParseExtrasProperty(&(sampler->extras), o);
@@ -5902,7 +5912,8 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
       Image image;
       if (!ParseImage(&image, idx, err, warn, o,
                       store_original_json_for_extras_and_extensions_, base_dir,
-                      &fs, &this->LoadImageData, load_image_user_data)) {
+                      &fs, &this->LoadImageData, load_image_user_data,
+                      load_external_images_)) {
         return false;
       }
 
@@ -7158,7 +7169,7 @@ static void SerializeGltfSampler(Sampler &sampler, json &o) {
   if (sampler.minFilter != -1) {
     SerializeNumberProperty("minFilter", sampler.minFilter, o);
   }
-  //SerializeNumberProperty("wrapR", sampler.wrapR, o);
+  // SerializeNumberProperty("wrapR", sampler.wrapR, o);
   SerializeNumberProperty("wrapS", sampler.wrapS, o);
   SerializeNumberProperty("wrapT", sampler.wrapT, o);
 
@@ -7521,8 +7532,10 @@ static void WriteBinaryGltfStream(std::ostream &stream,
   const uint32_t content_size = uint32_t(content.size());
   const uint32_t binBuffer_size = uint32_t(binBuffer.size());
   // determine number of padding bytes required to ensure 4 byte alignment
-  const uint32_t content_padding_size = content_size % 4 == 0 ? 0 : 4 - content_size % 4;
-  const uint32_t bin_padding_size = binBuffer_size % 4 == 0 ? 0 : 4 - binBuffer_size % 4;
+  const uint32_t content_padding_size =
+      content_size % 4 == 0 ? 0 : 4 - content_size % 4;
+  const uint32_t bin_padding_size =
+      binBuffer_size % 4 == 0 ? 0 : 4 - binBuffer_size % 4;
 
   // 12 bytes for header, JSON content length, 8 bytes for JSON chunk info.
   // Chunk data must be located at 4-byte boundary, which may require padding
